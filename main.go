@@ -7,13 +7,31 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/urfave/cli/v2"
 )
 
 var (
-	filename  string
-	chatLines []string
+	filename     string
+	category     string
+	urlRawList   []*url.URL
+	grouped      bool
+	groupedLinks = make(map[string][]*url.URL)
+	linesRead    int
+)
+
+var categoryDomainMap = map[string][]string{
+	LINKEDIN:  {"linkedin"},
+	INSTAGRAM: {"instagram"},
+	YOUTUBE:   {"youtube"},
+}
+
+const (
+	LINKEDIN       = "linkedin"
+	INSTAGRAM      = "instagram"
+	YOUTUBE        = "youtube"
+	ALL_CATEGORIES = "all"
 )
 
 func main() {
@@ -21,7 +39,7 @@ func main() {
 	app := &cli.App{
 		Name:    "chat-scraper-cli",
 		Usage:   "Scrape, list, and filter links from exported chat files",
-		Version: "0.3.4-beta",
+		Version: "0.5.0-beta",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:        "filename",
@@ -33,19 +51,29 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			{
-				Name:  "links",
-				Usage: "Operations with links",
+				Name:   "links",
+				Usage:  "Operations with links",
+				Before: linksBefore,
 				Subcommands: []*cli.Command{
 					{
 						Name:   "list",
-						Usage:  "List links (by category in the future)",
+						Usage:  "List links",
 						Action: linksList,
 						Flags: []cli.Flag{
 							&cli.StringFlag{
-								Name:    "category",
-								Aliases: []string{"c"},
-								Value:   "all",
-								Usage:   "Categories separated by comma (e.g. linkedin,instagram)",
+								Name:        "category",
+								Aliases:     []string{"c"},
+								Value:       ALL_CATEGORIES,
+								Usage:       "Categories separated by comma (e.g. linkedin,instagram)",
+								Destination: &category,
+								Action:      linksFilteredByCategory,
+							},
+							&cli.BoolFlag{
+								Name:        "grouped",
+								Aliases:     []string{"g"},
+								Usage:       "Display links grouped by category (instead of a flat list).",
+								Destination: &grouped,
+								Action:      groupLinks,
 							},
 						},
 					},
@@ -73,8 +101,7 @@ func openFile(name string) (*os.File, error) {
 
 }
 
-func linksList(cCtx *cli.Context) error {
-
+func linksBefore(cCtx *cli.Context) error {
 	f, err := openFile(filename)
 	if err != nil {
 		return err
@@ -84,43 +111,70 @@ func linksList(cCtx *cli.Context) error {
 		defer f.Close()
 	}
 
-	var countLines int
-	var rawResultSlice []url.URL
-
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		countLines++
-		urlLine, err := extractURL(sc.Text())
+		urlsPerLine, err := extractURL(sc.Text())
 		if err != nil {
 			return err
 		}
 
-		rawResultSlice = append(rawResultSlice, urlLine...)
-		chatLines = append(chatLines, sc.Text())
-
+		stripRawQuery(urlsPerLine)
+		urlRawList = append(urlRawList, urlsPerLine...)
+		linesRead++
 	}
 
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("scanning %s: %w", filename, err)
+	groupedLinks[ALL_CATEGORIES] = append(groupedLinks[ALL_CATEGORIES], urlRawList...)
+
+	return nil
+}
+
+func linksList(cCtx *cli.Context) error {
+	fmt.Fprintf(cCtx.App.Writer, "OK: %d lines read\n", linesRead)
+	fmt.Fprintf(cCtx.App.Writer, "All dicovered: %d \n", len(urlRawList))
+	fmt.Fprintf(cCtx.App.Writer, "Links showed: %d \n", len(groupedLinks[ALL_CATEGORIES]))
+
+	return nil
+}
+
+func linksFilteredByCategory(cCtx *cli.Context, categoriesImput string) error {
+	categories := strings.Split(categoriesImput, ",")
+	output := []*url.URL{}
+	for _, category := range categories {
+		if _, ok := categoryDomainMap[category]; ok {
+			output = append(output, filterURLByCategory(category, urlRawList)...)
+		}
 	}
 
-	resultSlice := stripRawQuery(rawResultSlice)
-	for i, v := range resultSlice {
-		fmt.Fprintf(cCtx.App.Writer, "%d: %s \n", i, v.String())
-	}
+	delete(groupedLinks, ALL_CATEGORIES)
+	groupedLinks[ALL_CATEGORIES] = append(groupedLinks[ALL_CATEGORIES], output...)
 
-	fmt.Fprintf(cCtx.App.Writer, "OK: %d lines read\n", countLines)
-	fmt.Fprintf(cCtx.App.Writer, "Links discovered: %d \n", len(resultSlice))
+	return nil
+}
+
+func groupLinks(cCtx *cli.Context, groupedCategory bool) error {
+	for _, v := range groupedLinks[ALL_CATEGORIES] {
+		if strings.Contains(v.Hostname(), categoryDomainMap[LINKEDIN][0]) {
+			groupedLinks[LINKEDIN] = append(groupedLinks[LINKEDIN], v)
+		}
+
+		if strings.Contains(v.Hostname(), categoryDomainMap[INSTAGRAM][0]) {
+			groupedLinks[INSTAGRAM] = append(groupedLinks[INSTAGRAM], v)
+		}
+
+		if strings.Contains(v.Hostname(), categoryDomainMap[YOUTUBE][0]) {
+			groupedLinks[YOUTUBE] = append(groupedLinks[YOUTUBE], v)
+		}
+	}
 
 	return nil
 }
 
 var urlRe = regexp.MustCompile(`https?://[^\s]+`)
 
-func extractURL(s string) ([]url.URL, error) {
+func extractURL(s string) ([]*url.URL, error) {
 
 	raws := urlRe.FindAllString(s, -1)
-	var result []url.URL
+	var result []*url.URL
 	for _, v := range raws {
 		// TODO: Add normalizeURL function to remove punctuation and other special characters
 
@@ -128,20 +182,43 @@ func extractURL(s string) ([]url.URL, error) {
 		if err != nil {
 			return nil, fmt.Errorf("URL validatig %s: %w", s, err)
 		}
-		result = append(result, *u)
+		result = append(result, u)
 	}
 
 	return result, nil
 }
 
-func stripRawQuery(urlSlice []url.URL) []url.URL {
-
-	var result []url.URL
-	for _, v := range urlSlice {
+func stripRawQuery(urlsPerLine []*url.URL) {
+	for _, v := range urlsPerLine {
 		v.RawQuery = ""
+	}
+}
 
-		result = append(result, v)
+func filterURLByCategory(categoryFilter string, urlRaw []*url.URL) []*url.URL {
+
+	if categoryFilter == ALL_CATEGORIES {
+		return urlRaw
 	}
 
-	return result
+	var filteredUrlsPerLine []*url.URL
+
+	for _, v := range urlRaw {
+		switch categoryFilter {
+		case LINKEDIN:
+			if strings.Contains(v.Hostname(), categoryDomainMap[LINKEDIN][0]) {
+				filteredUrlsPerLine = append(filteredUrlsPerLine, v)
+			}
+		case INSTAGRAM:
+			if strings.Contains(v.Hostname(), categoryDomainMap[INSTAGRAM][0]) {
+				filteredUrlsPerLine = append(filteredUrlsPerLine, v)
+			}
+		case YOUTUBE:
+			if strings.Contains(v.Hostname(), categoryDomainMap[YOUTUBE][0]) {
+				filteredUrlsPerLine = append(filteredUrlsPerLine, v)
+			}
+		}
+	}
+
+	return filteredUrlsPerLine
+
 }
