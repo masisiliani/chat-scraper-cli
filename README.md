@@ -119,7 +119,27 @@ chat-scraper-cli [options]
 
 # Show help
 chat-scraper-cli --help
+
+# List all discovered links
+chat-scraper-cli --filename chat_export.txt links list
+
+# Filter links by specific category
+chat-scraper-cli --filename chat_export.txt links list --category linkedin
+chat-scraper-cli --filename chat_export.txt links list --category instagram,youtube
+
+# Group links by category
+chat-scraper-cli --filename chat_export.txt links list --category all --grouped
+
+# Read from stdin (use '-' as filename)
+cat chat_export.txt | chat-scraper-cli --filename - links list
 ```
+
+### Supported Categories
+
+- `linkedin` - LinkedIn URLs
+- `instagram` - Instagram URLs  
+- `youtube` - YouTube URLs
+- `all` - All discovered URLs (default)
 
 ## Development
 
