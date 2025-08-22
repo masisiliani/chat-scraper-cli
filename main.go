@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -31,6 +32,7 @@ const (
 	LINKEDIN       = "linkedin"
 	INSTAGRAM      = "instagram"
 	YOUTUBE        = "youtube"
+	GENERAL        = "general"
 	ALL_CATEGORIES = "all"
 )
 
@@ -39,7 +41,7 @@ func main() {
 	app := &cli.App{
 		Name:    "chat-scraper-cli",
 		Usage:   "Scrape, list, and filter links from exported chat files",
-		Version: "0.5.0-beta",
+		Version: "0.6.2-beta",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:        "filename",
@@ -131,7 +133,15 @@ func linksBefore(cCtx *cli.Context) error {
 func linksList(cCtx *cli.Context) error {
 	fmt.Fprintf(cCtx.App.Writer, "OK: %d lines read\n", linesRead)
 	fmt.Fprintf(cCtx.App.Writer, "All dicovered: %d \n", len(urlRawList))
-	fmt.Fprintf(cCtx.App.Writer, "Links showed: %d \n", len(groupedLinks[ALL_CATEGORIES]))
+
+	if !grouped {
+		fmt.Fprintf(cCtx.App.Writer, "Links showed: %d \n", len(groupedLinks[ALL_CATEGORIES]))
+	} else {
+		printGroupedLinks(cCtx.App.Writer, LINKEDIN, groupedLinks[LINKEDIN])
+		printGroupedLinks(cCtx.App.Writer, INSTAGRAM, groupedLinks[INSTAGRAM])
+		printGroupedLinks(cCtx.App.Writer, YOUTUBE, groupedLinks[YOUTUBE])
+		printGroupedLinks(cCtx.App.Writer, GENERAL, groupedLinks[GENERAL])
+	}
 
 	return nil
 }
@@ -155,15 +165,21 @@ func groupLinks(cCtx *cli.Context, groupedCategory bool) error {
 	for _, v := range groupedLinks[ALL_CATEGORIES] {
 		if strings.Contains(v.Hostname(), categoryDomainMap[LINKEDIN][0]) {
 			groupedLinks[LINKEDIN] = append(groupedLinks[LINKEDIN], v)
+			continue
 		}
 
 		if strings.Contains(v.Hostname(), categoryDomainMap[INSTAGRAM][0]) {
 			groupedLinks[INSTAGRAM] = append(groupedLinks[INSTAGRAM], v)
+			continue
 		}
 
 		if strings.Contains(v.Hostname(), categoryDomainMap[YOUTUBE][0]) {
 			groupedLinks[YOUTUBE] = append(groupedLinks[YOUTUBE], v)
+			continue
 		}
+
+		groupedLinks[GENERAL] = append(groupedLinks[GENERAL], v)
+
 	}
 
 	return nil
@@ -221,4 +237,11 @@ func filterURLByCategory(categoryFilter string, urlRaw []*url.URL) []*url.URL {
 
 	return filteredUrlsPerLine
 
+}
+
+func printGroupedLinks(writer io.Writer, category string, links []*url.URL) {
+	fmt.Fprintf(writer, "\n %s\n", strings.ToUpper(category))
+	for i, v := range links {
+		fmt.Fprintf(writer, "\t%d: %s \n", i+1, v)
+	}
 }
